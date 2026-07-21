@@ -12,6 +12,7 @@ import { serializeFilmidiPackage } from "./exportHelpers";
 import { getMediaDuration } from "./mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 import { extractMovAudio } from "@/lib/movAudio";
+import { requestNativeMedia } from "@/lib/nativeMediaBridge";
 
 const { addLayerCommand } = commands;
 
@@ -129,7 +130,29 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
     const type = file.type.startsWith("video/") ? "video" as const : file.type.startsWith("audio/") ? "audio" as const : "image" as const;
     const duration = await getMediaDuration(file, type);
     const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const url = URL.createObjectURL(file);
+    let url = URL.createObjectURL(file);
+    let normalizedBy: string | undefined;
+    if (type === "video") {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let binary = "";
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)));
+        }
+        const normalized = await requestNativeMedia<{ dataUrl?: string; backend?: string }>("gstreamer-normalize", {
+          base64Data: btoa(binary),
+          mimeType: file.type || "video/quicktime",
+          fileName: file.name,
+        });
+        if (normalized?.dataUrl) {
+          url = normalized.dataUrl;
+          normalizedBy = normalized.backend ?? "gstreamer";
+        }
+      } catch (error) {
+        console.info("[media-import] GStreamer normalization unavailable; using original source", error);
+      }
+    }
     const audioUrl = type === "video" ? await extractMovAudio(file) : null;
     mediaStore.addAsset({
       id,
@@ -141,6 +164,9 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
       folderId: mediaStore.currentFolderId,
       createdAt: Date.now(),
     });
+    if (normalizedBy) {
+      mediaStore.showToast(`${file.name} normalized with GStreamer`, "success");
+    }
     if (type === "video") {
       const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
       const { commands: cmds } = await import("@videoflow/react-video-editor");
