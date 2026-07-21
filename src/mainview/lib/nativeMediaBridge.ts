@@ -5,8 +5,7 @@ export type NativeMediaTask =
   | "detect-beats"
   | "extract-audio"
   | "export-video"
-  | "sample-frames"
-  | "gstreamer-normalize";
+  | "sample-frames";
 
 export interface NativeMediaRequest {
   task: NativeMediaTask;
@@ -54,9 +53,7 @@ export async function requestNativeMedia<T = unknown>(
   task: NativeMediaTask,
   payload: Record<string, unknown>,
 ): Promise<T | null> {
-  // GStreamer is a Bun-hosted backend; do not route this task to the
-  // optional Swift sidecar even when that sidecar is available.
-  if (task !== "gstreamer-normalize" && hasSwiftSidecarBridge()) {
+  if (hasSwiftSidecarBridge()) {
     try {
       const response = await window.__filmidiSwiftSidecar!.request({ task, payload });
       if (response == null) return null;
